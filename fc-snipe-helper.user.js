@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC Snipe Helper
 // @namespace    https://github.com/Saytrix08/Fifa-sniper
-// @version      0.2.0
+// @version      0.2.1
 // @description  Overlay für die EA FC Web App: Snipe-Liste, Suchfilter per Klick ausfüllen, Mindest-Sofortkaufpreis automatisch hochsetzen, Gewinn nach Steuer. Suchen und Kaufen klickst du selbst.
 // @match        https://*.ea.com/*web-app*
 // @noframes
@@ -112,7 +112,17 @@
   let data;
   let root;
   let host;
-  const session = { searchPending: false, lastResult: null, filtersVisible: false, cheapest: 0, searchTimes: [], emptyCount: 0 };
+  const session = {
+    searchPending: false,
+    lastResult: null,
+    filtersVisible: false,
+    searchMinBin: 0,
+    searchMaxBin: 0,
+    pendingMinBin: null,
+    cheapest: 0,
+    searchTimes: [],
+    emptyCount: 0,
+  };
 
   function load() {
     const base = JSON.parse(JSON.stringify(DEFAULTS));
@@ -170,24 +180,32 @@
     notify(`Max. Sofortkauf ${fmt(target.maxBuy)} gesetzt – jetzt die richtige Karte in der Vorschlagsliste wählen.`);
   }
 
-  function bumpMinBin() {
-    const view = filtersView();
+  function priceInputs(view) {
     const prices = view ? $$(SELECTORS.priceInputs, view) : [];
-    if (prices.length < 4) return;
+    return prices.length >= 4 ? prices : null;
+  }
+
+  // Trägt den vorgemerkten Mindest-Sofortkaufpreis ein, sobald die Preisfelder
+  // im DOM sind – auch während die Suchseite hinter den Ergebnissen versteckt ist.
+  function applyPendingMinBin(view) {
+    const prices = priceInputs(view);
+    if (session.pendingMinBin == null || !prices) return;
     const minEl = prices[PRICE.minBin];
-    const next = nextMinBin(parseCoins(minEl.value), parseCoins(prices[PRICE.maxBin].value), data.bumps, data.settings.cycleSteps);
-    setInputValue(minEl, next.value ? String(next.value) : '');
-    data.bumps = next.bumps;
-    save();
-    notify(next.value ? `Min. Sofortkauf → ${fmt(next.value)}` : 'Min. Sofortkauf zurückgesetzt');
+    if (parseCoins(minEl.value) !== session.pendingMinBin) {
+      setInputValue(minEl, session.pendingMinBin ? String(session.pendingMinBin) : '');
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Beobachten, was in der Web App passiert
   // ---------------------------------------------------------------------------
 
-  function onSearchClicked() {
+  function onSearchClicked(view) {
     const now = Date.now();
+    const prices = priceInputs(view);
+    session.searchMinBin = prices ? parseCoins(prices[PRICE.minBin].value) : 0;
+    session.searchMaxBin = prices ? parseCoins(prices[PRICE.maxBin].value) : 0;
+    session.pendingMinBin = null;
     session.searchPending = true;
     session.lastResult = null;
     session.cheapest = 0;
@@ -200,20 +218,36 @@
     session.searchPending = false;
     session.lastResult = kind;
     if (kind === 'empty') session.emptyCount++;
+    if (data.settings.bumpMode === 'always' || kind === 'empty') {
+      const next = nextMinBin(session.searchMinBin, session.searchMaxBin, data.bumps, data.settings.cycleSteps);
+      data.bumps = next.bumps;
+      session.pendingMinBin = next.value;
+      save();
+      applyPendingMinBin($(SELECTORS.filtersView));
+      notify(next.value ? `Nächste Suche: Min. Sofortkauf ${fmt(next.value)}` : 'Nächste Suche: Min. Sofortkauf leer');
+    }
     renderStatus();
   }
 
   function scan() {
-    const visible = !!filtersView();
-    if (session.searchPending && !visible) {
+    const view = filtersView();
+    const visible = !!view;
+    if (session.searchPending) {
       if ($$(SELECTORS.noResults).some(isVisible)) finishSearch('empty');
-      else if ($$(SELECTORS.resultItem).some(isVisible)) finishSearch('found');
+      else if (!visible && $$(SELECTORS.resultItem).some(isVisible)) finishSearch('found');
     }
     if (session.lastResult === 'found' && !visible) annotateResults();
-    // Zurück auf der Suchseite nach einer Suche → Mindestpreis für die nächste Suche anpassen
-    if (visible && !session.filtersVisible && session.lastResult) {
-      if (data.settings.bumpMode === 'always' || session.lastResult === 'empty') bumpMinBin();
+    // Zurück auf der Suchseite: Falls die Web App die Felder neu aufgebaut hat,
+    // den vorgemerkten Mindestpreis sofort und kurz darauf noch einmal eintragen.
+    if (visible && !session.filtersVisible) {
       session.lastResult = null;
+      if (session.pendingMinBin != null) {
+        applyPendingMinBin(view);
+        setTimeout(() => {
+          applyPendingMinBin(filtersView());
+          session.pendingMinBin = null;
+        }, 400);
+      }
     }
     session.filtersVisible = visible;
   }
@@ -247,7 +281,11 @@
     }
     const text = `${profit >= 0 ? '+' : ''}${fmt(profit)}`;
     if (badge.textContent !== text) badge.textContent = text;
-    badge.style.background = profit >= 0 ? '#1f9d55' : '#c53030';
+    const sign = profit >= 0 ? 'pos' : 'neg';
+    if (badge.dataset.sign !== sign) {
+      badge.dataset.sign = sign;
+      badge.style.background = sign === 'pos' ? '#1f9d55' : '#c53030';
+    }
   }
 
   function watchWebApp() {
@@ -259,7 +297,13 @@
         timer = null;
         scan();
       }, 50);
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    }).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      // Die Web App blendet Seiten teils nur per Klasse/Style ein und aus
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden'],
+    });
 
     document.addEventListener(
       'pointerup',
@@ -268,7 +312,7 @@
         if (!el) return;
         const view = filtersView();
         const btn = el.closest(SELECTORS.searchButton);
-        if (btn && view && view.contains(btn)) onSearchClicked();
+        if (btn && view && view.contains(btn)) onSearchClicked(view);
         else if (el.closest(SELECTORS.navTab)) {
           session.searchPending = false;
           session.lastResult = null;

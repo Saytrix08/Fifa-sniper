@@ -4,7 +4,7 @@ Overlay (Tampermonkey-Userscript) für die EA FC Web App, das dir beim **manuell
 
 - **Snipe-Liste**: Spieler mit Verkaufspreis, Wunschgewinn, max. Kaufpreis und Anzahl („2x kaufen“).
 - **Filter per Klick**: „Filter“ trägt Max. Sofortkauf und Spielernamen in die Transfermarkt-Suche ein. Die richtige Karte wählst du dann in der Vorschlagsliste.
-- **Mindestpreis automatisch hochsetzen**: Wenn eine Suche nichts findet und du zurück auf die Suchseite gehst, steht der Min. Sofortkauf schon eine Preisstufe höher. Der nächste Klick auf „Suchen“ ist damit eine neue Abfrage. Nach einer einstellbaren Anzahl Erhöhungen fängt er wieder bei leer an. In den Einstellungen kannst du stattdessen „nach jeder Suche erhöhen“ wählen.
+- **Mindestpreis automatisch hochsetzen**: Sobald eine Suche „keine Ergebnisse“ meldet, setzt das Script den Min. Sofortkauf eine Preisstufe höher. Wenn du zurück auf die Suchseite gehst, steht der neue Wert schon drin. Der nächste Klick auf „Suchen“ ist damit eine neue Abfrage. Nach einer einstellbaren Anzahl Erhöhungen fängt er wieder bei leer an. In den Einstellungen kannst du stattdessen „nach jeder Suche erhöhen“ wählen.
 - **Gewinn nach 5 % EA-Steuer** als grünes/rotes Badge an jeder Karte in den Suchergebnissen.
 - **Zähler und Verlauf**: „+1 Kauf“ und „Verkauft“ protokollieren Käufe und Verkäufe. Du siehst „1/2 gekauft“, Ausgaben, Einnahmen und Bilanz.
 - **Suchzähler** für die letzten 60 Minuten, damit du dein Tempo im Blick behältst.
