@@ -15,7 +15,13 @@ Overlay (Tampermonkey-Userscript) für die EA FC Web App, das dir beim **manuell
 
 1. [Tampermonkey](https://www.tampermonkey.net/) im Browser installieren.
 2. Tampermonkey → „Neues Script erstellen“ → den gesamten Inhalt von [`fc-snipe-helper.user.js`](fc-snipe-helper.user.js) einfügen → speichern.
-3. Die Web App öffnen (`https://www.ea.com/…/ea-sports-fc/ultimate-team/web-app/`). Oben rechts erscheint das Overlay.
+3. **Nur Chrome/Edge/Brave:** `chrome://extensions` öffnen → bei Tampermonkey auf **Details** → **„Nutzerskripts zulassen“ / „Allow user scripts“** einschalten. Bei älteren Chrome-Versionen stattdessen oben rechts den **Entwicklermodus** einschalten. Ohne diesen Schalter führt Tampermonkey gar keine Scripts aus.
+4. Die Web App öffnen (`https://www.ea.com/ea-sports-fc/ultimate-team/web-app/`) und die Seite einmal neu laden. Oben rechts erscheint das Overlay.
+
+### Overlay erscheint nicht?
+
+- **Tampermonkey-Symbol** in der Browserleiste: Auf der Web App sollte eine rote **1** daran stehen und „FC Snipe Helper“ beim Anklicken aktiviert sein. Steht keine Zahl dran, startet Tampermonkey das Script nicht. Dann den Schalter aus Schritt 3 prüfen.
+- **Konsole** (F12 → Reiter „Console“): Dort sollte `[FC Snipe Helper] geladen auf …` stehen. Steht dort `Start fehlgeschlagen`, die rote Fehlermeldung darunter kopieren.
 
 ## Ablauf
 

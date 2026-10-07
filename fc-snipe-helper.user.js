@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         FC Snipe Helper
 // @namespace    https://github.com/Saytrix08/Fifa-sniper
-// @version      0.1.0
+// @version      0.1.1
 // @description  Overlay für die EA FC Web App: Snipe-Liste, Suchfilter per Klick ausfüllen, Mindest-Sofortkaufpreis automatisch hochsetzen, Gewinn nach Steuer. Suchen und Kaufen klickst du selbst.
-// @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
-// @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
+// @match        https://*.ea.com/*web-app*
+// @noframes
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -109,6 +109,7 @@
 
   let data;
   let root;
+  let host;
   const session = { searchPending: false, lastResult: null, filtersVisible: false, cheapest: 0, searchTimes: [], emptyCount: 0 };
 
   function load() {
@@ -250,12 +251,13 @@
   function watchWebApp() {
     let timer = null;
     new MutationObserver(() => {
+      attachHost();
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
         scan();
       }, 50);
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.documentElement, { childList: true, subtree: true });
 
     document.addEventListener(
       'pointerup',
@@ -323,7 +325,6 @@
   `;
 
   const TEMPLATE = `
-    <style>${CSS}</style>
     <div class="panel">
       <div class="head"><strong>FC Snipe Helper</strong><button class="icon" data-act="toggle" title="Ein-/Ausklappen">–</button></div>
       <div class="body">
@@ -553,12 +554,31 @@
     renderStatus();
   }
 
+  // Constructable Stylesheets greifen auch, wenn die Seite Inline-<style> per CSP blockiert.
+  function applyStyles(shadow) {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(CSS);
+      shadow.adoptedStyleSheets = [sheet];
+    } catch (e) {
+      const style = document.createElement('style');
+      style.textContent = CSS;
+      shadow.prepend(style);
+    }
+  }
+
+  // Die Web App baut ihre Seite beim Start neu auf und kann das Overlay dabei entfernen.
+  function attachHost() {
+    if (!host.isConnected) (document.body || document.documentElement).appendChild(host);
+  }
+
   function mountPanel() {
-    const host = document.createElement('div');
+    host = document.createElement('div');
     host.id = 'fc-snipe-helper';
     host.style.cssText = 'position:fixed;top:72px;right:12px;z-index:2147483000;';
     root = host.attachShadow({ mode: 'open' });
     root.innerHTML = TEMPLATE;
+    applyStyles(root);
     root.querySelector(`input[name="bumpMode"][value="${data.settings.bumpMode}"]`).checked = true;
     root.querySelector('input[name="cycleSteps"]').value = data.settings.cycleSteps;
     root.addEventListener('click', onPanelClick);
@@ -567,15 +587,20 @@
     root.addEventListener('change', onPanelChange);
     // Tastatureingaben im Overlay nicht an die Web App weiterreichen
     for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, (e) => e.stopPropagation());
-    document.body.appendChild(host);
+    attachHost();
     render();
   }
 
   function init() {
-    data = load();
-    mountPanel();
-    watchWebApp();
-    scan();
+    console.info('[FC Snipe Helper] geladen auf', location.href);
+    try {
+      data = load();
+      mountPanel();
+      watchWebApp();
+      scan();
+    } catch (e) {
+      console.error('[FC Snipe Helper] Start fehlgeschlagen:', e);
+    }
   }
 
   init();
