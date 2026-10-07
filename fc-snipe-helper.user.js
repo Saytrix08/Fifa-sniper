@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FC Snipe Helper
 // @namespace    https://github.com/Saytrix08/Fifa-sniper
-// @version      0.3.0
+// @version      0.3.1
 // @description  Overlay für die EA FC Web App: Snipe-Liste, Suchfilter per Klick ausfüllen, Mindest-Sofortkaufpreis automatisch hochsetzen, Pfeiltasten für Zurück/Suchen, Gewinn nach Steuer. Jede Suche und jeden Kauf löst du selbst aus.
 // @match        https://*.ea.com/*web-app*
 // @noframes
@@ -91,8 +91,11 @@
     playerName: '.ut-player-search-control input',
     // Reihenfolge: Gebot min, Gebot max, Sofortkauf min, Sofortkauf max
     priceInputs: '.search-prices .price-filter input',
-    searchButton: '.btn-standard.call-to-action',
-    resultItem: '.listFUTItem',
+    // „+“-Knopf neben einem Preisfeld
+    priceSpinner: '.ut-numeric-input-spinner-control',
+    priceIncrement: '.increment-value',
+    searchButton: '.button-container .btn-standard.primary, .btn-standard.call-to-action',
+    resultItem: '.SearchResults .listFUTItem, .SearchResults .paginated-item-list > ul > li',
     noResults: '.ut-no-results-view',
     // Letzter Treffer innerhalb einer Karte = Sofortkaufpreis
     itemPrices: '.auction .auctionValue .currency-coins.value',
@@ -165,7 +168,25 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    if (!keepFocus) input.blur();
+    if (keepFocus) return;
+    // Die Web App übernimmt den Wert beim Verlassen des Feldes. Ist die Suchseite
+    // gerade versteckt, klappt focus()/blur() nicht – dann die Events selbst schicken.
+    if (document.activeElement === input) input.blur();
+    else {
+      input.dispatchEvent(new FocusEvent('blur'));
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    }
+  }
+
+  // Mindestpreis setzen – wenn es genau eine Stufe nach oben geht, über den
+  // „+“-Knopf der Web App selbst, sonst (oder falls der nichts bewirkt) direkt.
+  function writeMinBin(minEl, value) {
+    const spinner = minEl.closest(SELECTORS.priceSpinner);
+    const inc = spinner && $(SELECTORS.priceIncrement, spinner);
+    if (value && inc && !inc.classList.contains('disabled') && value === nextPrice(parseCoins(minEl.value))) {
+      pressButton(inc);
+    }
+    if (parseCoins(minEl.value) !== value) setInputValue(minEl, value ? String(value) : '');
   }
 
   function fillFilters(target) {
@@ -195,9 +216,7 @@
     const prices = priceInputs(view);
     if (session.pendingMinBin == null || !prices) return;
     const minEl = prices[PRICE.minBin];
-    if (parseCoins(minEl.value) !== session.pendingMinBin) {
-      setInputValue(minEl, session.pendingMinBin ? String(session.pendingMinBin) : '');
-    }
+    if (parseCoins(minEl.value) !== session.pendingMinBin) writeMinBin(minEl, session.pendingMinBin);
   }
 
   // Steht der Mindestpreis noch auf dem Wert der letzten Suche, wird er direkt
@@ -212,7 +231,7 @@
     const next = nextMinBin(current, parseCoins(prices[PRICE.maxBin].value), data.bumps, data.settings.cycleSteps);
     data.bumps = next.bumps;
     save();
-    setInputValue(minEl, next.value ? String(next.value) : '');
+    writeMinBin(minEl, next.value);
   }
 
   // ---------------------------------------------------------------------------
@@ -332,9 +351,9 @@
         const el = e.target instanceof Element ? e.target : null;
         if (!el) return;
         const view = filtersView();
-        const btn = el.closest(SELECTORS.searchButton);
+        const btn = view && searchButtonIn(view);
         // Nur echte Klicks – die Pfeiltaste meldet ihre Suche selbst an
-        if (btn && view && view.contains(btn)) {
+        if (btn && btn.contains(el)) {
           if (!e.isTrusted) return;
           ensureFreshMinBin(priceInputs(view));
           onSearchClicked(view);
@@ -371,8 +390,12 @@
     }
   }
 
+  function searchButtonIn(view) {
+    return findButton(view, SELECTORS.searchButton, /^(suchen|search)$/i);
+  }
+
   function hotkeySearch(view) {
-    const btn = findButton(view, SELECTORS.searchButton, /^(suchen|search)$/i);
+    const btn = searchButtonIn(view);
     if (!btn) {
       notify('Such-Button nicht gefunden – bitte „Seitenaufbau kopieren“ und an Claude schicken.');
       return false;
@@ -648,7 +671,7 @@
       `Suchseite sichtbar: ${view ? 'ja' : 'nein'}`,
       `Spielername-Feld: ${view && $(SELECTORS.playerName, view) ? 'gefunden' : 'fehlt'}`,
       `Preisfelder: ${view ? $$(SELECTORS.priceInputs, view).length : 0} von 4`,
-      `Such-Button: ${view && $(SELECTORS.searchButton, view) ? 'gefunden' : 'fehlt'}`,
+      `Such-Button: ${view && searchButtonIn(view) ? 'gefunden' : 'fehlt'}`,
       `Ergebnis-Karten sichtbar: ${$$(SELECTORS.resultItem).filter(isVisible).length}`,
       `„Keine Ergebnisse“ sichtbar: ${$$(SELECTORS.noResults).some(isVisible) ? 'ja' : 'nein'}`,
       `Zurück-Button: ${$$(SELECTORS.backButton).some(isVisible) ? 'gefunden' : 'fehlt'}`,
