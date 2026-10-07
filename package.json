@@ -1,0 +1,9 @@
+{
+  "name": "fc-snipe-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Overlay für die EA FC Web App zum manuellen Snipen",
+  "scripts": {
+    "test": "node --test"
+  }
+}
