@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         FC Snipe Helper
 // @namespace    https://github.com/Saytrix08/Fifa-sniper
-// @version      0.2.1
-// @description  Overlay für die EA FC Web App: Snipe-Liste, Suchfilter per Klick ausfüllen, Mindest-Sofortkaufpreis automatisch hochsetzen, Gewinn nach Steuer. Suchen und Kaufen klickst du selbst.
+// @version      0.3.0
+// @description  Overlay für die EA FC Web App: Snipe-Liste, Suchfilter per Klick ausfüllen, Mindest-Sofortkaufpreis automatisch hochsetzen, Pfeiltasten für Zurück/Suchen, Gewinn nach Steuer. Jede Suche und jeden Kauf löst du selbst aus.
 // @match        https://*.ea.com/*web-app*
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -96,6 +97,7 @@
     // Letzter Treffer innerhalb einer Karte = Sofortkaufpreis
     itemPrices: '.auction .auctionValue .currency-coins.value',
     navTab: '.ut-tab-bar-item',
+    backButton: '.ut-navigation-button-control',
   };
   const PRICE = { minBid: 0, maxBid: 1, minBin: 2, maxBin: 3 };
 
@@ -106,7 +108,7 @@
     bumps: 0,
     log: [],
     collapsed: false,
-    settings: { bumpMode: 'empty', cycleSteps: 10 },
+    settings: { bumpMode: 'empty', cycleSteps: 10, hotkeys: true },
   };
 
   let data;
@@ -116,8 +118,9 @@
     searchPending: false,
     lastResult: null,
     filtersVisible: false,
-    searchMinBin: 0,
+    searchMinBin: null,
     searchMaxBin: 0,
+    lastOutcome: null,
     pendingMinBin: null,
     cheapest: 0,
     searchTimes: [],
@@ -173,6 +176,7 @@
     setInputValue(prices[PRICE.minBin], '');
     setInputValue(prices[PRICE.maxBin], String(target.maxBuy));
     data.bumps = 0;
+    session.searchMinBin = null;
     save();
     const name = $(SELECTORS.playerName, view);
     if (!name) return notify('Max. Sofortkauf gesetzt, Namensfeld nicht gefunden – Spieler bitte selbst eintippen.');
@@ -196,6 +200,21 @@
     }
   }
 
+  // Steht der Mindestpreis noch auf dem Wert der letzten Suche, wird er direkt
+  // vor der neuen Suche eine Stufe weitergesetzt. Das greift auch, wenn die
+  // Seite „Keine Ergebnisse“ anders anzeigt, als das Script erwartet.
+  function ensureFreshMinBin(prices) {
+    if (!prices || session.searchMinBin == null) return;
+    if (data.settings.bumpMode === 'empty' && session.lastOutcome === 'found') return;
+    const minEl = prices[PRICE.minBin];
+    const current = parseCoins(minEl.value);
+    if (current !== session.searchMinBin) return;
+    const next = nextMinBin(current, parseCoins(prices[PRICE.maxBin].value), data.bumps, data.settings.cycleSteps);
+    data.bumps = next.bumps;
+    save();
+    setInputValue(minEl, next.value ? String(next.value) : '');
+  }
+
   // ---------------------------------------------------------------------------
   // Beobachten, was in der Web App passiert
   // ---------------------------------------------------------------------------
@@ -208,6 +227,7 @@
     session.pendingMinBin = null;
     session.searchPending = true;
     session.lastResult = null;
+    session.lastOutcome = null;
     session.cheapest = 0;
     session.searchTimes = session.searchTimes.filter((t) => now - t < 3600000);
     session.searchTimes.push(now);
@@ -217,6 +237,7 @@
   function finishSearch(kind) {
     session.searchPending = false;
     session.lastResult = kind;
+    session.lastOutcome = kind;
     if (kind === 'empty') session.emptyCount++;
     if (data.settings.bumpMode === 'always' || kind === 'empty') {
       const next = nextMinBin(session.searchMinBin, session.searchMaxBin, data.bumps, data.settings.cycleSteps);
@@ -312,14 +333,128 @@
         if (!el) return;
         const view = filtersView();
         const btn = el.closest(SELECTORS.searchButton);
-        if (btn && view && view.contains(btn)) onSearchClicked(view);
-        else if (el.closest(SELECTORS.navTab)) {
+        // Nur echte Klicks – die Pfeiltaste meldet ihre Suche selbst an
+        if (btn && view && view.contains(btn)) {
+          if (!e.isTrusted) return;
+          ensureFreshMinBin(priceInputs(view));
+          onSearchClicked(view);
+        } else if (el.closest(SELECTORS.navTab)) {
           session.searchPending = false;
           session.lastResult = null;
         }
       },
       true
     );
+
+    document.addEventListener('keydown', onHotkey, true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pfeiltasten: ← zurück, → suchen. Ein Tastendruck = eine Aktion; gedrückt
+  // halten wiederholt nichts.
+  // ---------------------------------------------------------------------------
+
+  const HOTKEY_GAP_MS = 300;
+  let lastHotkey = 0;
+
+  function findButton(scope, selector, textPattern) {
+    const direct = $$(selector, scope).find(isVisible);
+    if (direct || !textPattern) return direct || null;
+    return $$('button', scope).find((b) => isVisible(b) && textPattern.test(b.textContent.trim())) || null;
+  }
+
+  function pressButton(el) {
+    const Pointer = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      const Ctor = type.startsWith('pointer') ? Pointer : MouseEvent;
+      el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, button: 0, buttons: type.endsWith('down') ? 1 : 0 }));
+    }
+  }
+
+  function hotkeySearch(view) {
+    const btn = findButton(view, SELECTORS.searchButton, /^(suchen|search)$/i);
+    if (!btn) {
+      notify('Such-Button nicht gefunden – bitte „Seitenaufbau kopieren“ und an Claude schicken.');
+      return false;
+    }
+    const prices = priceInputs(view);
+    ensureFreshMinBin(prices);
+    onSearchClicked(view);
+    pressButton(btn);
+    if (prices) {
+      const min = parseCoins(prices[PRICE.minBin].value);
+      notify(`Suche · Min. Sofortkauf ${min ? fmt(min) : 'leer'}`);
+    }
+    return true;
+  }
+
+  function hotkeyBack() {
+    const btn = findButton(document, SELECTORS.backButton);
+    if (!btn) {
+      notify('Zurück-Button nicht gefunden – bitte „Seitenaufbau kopieren“ und an Claude schicken.');
+      return false;
+    }
+    pressButton(btn);
+    return true;
+  }
+
+  function onHotkey(e) {
+    if (!data.settings.hotkeys || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    if (e.repeat || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const view = filtersView();
+    // Im Overlay und beim Tippen in Textfeldern Pfeiltasten normal lassen –
+    // außer in den Preisfeldern der Suche.
+    const path = e.composedPath();
+    if (host && path.includes(host)) return;
+    const origin = path[0];
+    const prices = priceInputs(view) || [];
+    const editable = origin instanceof Element && origin.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+    if (editable && !prices.includes(origin)) return;
+    const now = Date.now();
+    if (now - lastHotkey < HOTKEY_GAP_MS) {
+      e.preventDefault();
+      return;
+    }
+    let handled = false;
+    if (e.key === 'ArrowRight' && view) handled = hotkeySearch(view);
+    else if (e.key === 'ArrowLeft' && !view) handled = hotkeyBack();
+    if (handled) {
+      lastHotkey = now;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
+  // Sichtbaren Seitenaufbau (Tags, Klassen, kurze Texte) zum Einschicken
+  function snapshotPage() {
+    const lines = [];
+    const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'svg', 'SVG', 'TEMPLATE']);
+    const walk = (el, depth) => {
+      if (lines.length >= 600 || el === host || skip.has(el.tagName) || !isVisible(el)) return;
+      let line = '  '.repeat(depth) + el.tagName.toLowerCase();
+      if (el.classList.length) line += '.' + Array.from(el.classList).join('.');
+      if (el.tagName === 'INPUT') line += ` [type=${el.type}${el.placeholder ? ` placeholder="${el.placeholder}"` : ''}${el.value ? ` value="${el.value}"` : ''}]`;
+      if (el.tagName === 'BUTTON' || el.children.length === 0) {
+        const text = el.textContent.trim().replace(/\s+/g, ' ').slice(0, 40);
+        if (text) line += ` "${text}"`;
+      }
+      lines.push(line);
+      for (const child of el.children) walk(child, depth + 1);
+    };
+    walk(document.body, 0);
+    return `FC Snipe Helper ${typeof GM_info === 'object' ? GM_info.script.version : ''} · ${location.pathname}\n` + lines.join('\n');
+  }
+
+  function copySnapshot() {
+    const text = snapshotPage();
+    root.getElementById('diag').textContent = text;
+    try {
+      if (typeof GM_setClipboard === 'function') GM_setClipboard(text, 'text');
+      else navigator.clipboard.writeText(text);
+      notify(`Seitenaufbau kopiert (${text.split('\n').length} Zeilen) – jetzt im Chat mit Strg+V einfügen.`);
+    } catch (err) {
+      notify('Kopieren fehlgeschlagen – Text unten markieren und kopieren.');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -364,7 +499,8 @@
     label.radio { display: flex; align-items: center; gap: 6px; color: #e8eaf0; font-size: 13px; }
     input { font: inherit; color: #e8eaf0; background: #0f1116; border: 1px solid #3a4050; border-radius: 6px; padding: 5px 7px; width: 100%; }
     input[type=radio] { width: auto; }
-    pre { white-space: pre-wrap; margin: 0; color: #9aa1b2; font-size: 12px; }
+    pre { white-space: pre-wrap; margin: 0; color: #9aa1b2; font-size: 12px; max-height: 220px; overflow: auto; user-select: text; }
+    .buttons { display: flex; gap: 6px; flex-wrap: wrap; }
     pre:empty { display: none; }
     .log { display: grid; gap: 2px; margin-top: 8px; font-size: 12px; }
     .log-row { display: flex; justify-content: space-between; gap: 8px; }
@@ -412,7 +548,10 @@
             h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'bumpMode', value: 'empty' }), 'Min. Sofortkauf erhöhen, wenn nichts gefunden'),
             h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'bumpMode', value: 'always' }), 'nach jeder Suche erhöhen'),
             field('Erhöhungen, bevor er wieder bei leer anfängt', { name: 'cycleSteps', type: 'number', min: 1, max: 50 }),
-            h('button', { 'data-act': 'diagnose' }, 'Diagnose'),
+            h('label', { class: 'radio' }, h('input', { type: 'checkbox', name: 'hotkeys' }), 'Pfeiltasten: ← zurück, → suchen'),
+            h('div', { class: 'buttons' },
+              h('button', { 'data-act': 'diagnose' }, 'Diagnose'),
+              h('button', { 'data-act': 'snapshot' }, 'Seitenaufbau kopieren')),
             h('pre', { id: 'diag' }))),
         h('details', null,
           h('summary', null, 'Verlauf'),
@@ -512,6 +651,7 @@
       `Such-Button: ${view && $(SELECTORS.searchButton, view) ? 'gefunden' : 'fehlt'}`,
       `Ergebnis-Karten sichtbar: ${$$(SELECTORS.resultItem).filter(isVisible).length}`,
       `„Keine Ergebnisse“ sichtbar: ${$$(SELECTORS.noResults).some(isVisible) ? 'ja' : 'nein'}`,
+      `Zurück-Button: ${$$(SELECTORS.backButton).some(isVisible) ? 'gefunden' : 'fehlt'}`,
     ];
     if (!view) lines.push('', 'Für den vollen Test: Transfers → Transfermarkt durchsuchen öffnen und erneut klicken.');
     root.getElementById('diag').textContent = lines.join('\n');
@@ -554,6 +694,9 @@
         break;
       case 'diagnose':
         diagnose();
+        return;
+      case 'snapshot':
+        copySnapshot();
         return;
     }
     save();
@@ -599,6 +742,7 @@
   function onPanelChange(e) {
     const el = e.target;
     if (el.name === 'bumpMode') data.settings.bumpMode = el.value;
+    else if (el.name === 'hotkeys') data.settings.hotkeys = el.checked;
     else if (el.name === 'cycleSteps') {
       data.settings.cycleSteps = Math.min(50, Math.max(1, parseInt(el.value, 10) || 10));
       el.value = data.settings.cycleSteps;
@@ -634,6 +778,7 @@
     root.append(buildPanel());
     root.querySelector(`input[name="bumpMode"][value="${data.settings.bumpMode}"]`).checked = true;
     root.querySelector('input[name="cycleSteps"]').value = data.settings.cycleSteps;
+    root.querySelector('input[name="hotkeys"]').checked = !!data.settings.hotkeys;
     root.addEventListener('click', onPanelClick);
     root.addEventListener('submit', onAdd);
     root.addEventListener('input', onPanelInput);
