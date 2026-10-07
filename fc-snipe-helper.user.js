@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         FC Snipe Helper
 // @namespace    https://github.com/Saytrix08/Fifa-sniper
-// @version      0.1.1
+// @version      0.2.0
 // @description  Overlay für die EA FC Web App: Snipe-Liste, Suchfilter per Klick ausfüllen, Mindest-Sofortkaufpreis automatisch hochsetzen, Gewinn nach Steuer. Suchen und Kaufen klickst du selbst.
 // @match        https://*.ea.com/*web-app*
 // @noframes
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -115,7 +117,7 @@
   function load() {
     const base = JSON.parse(JSON.stringify(DEFAULTS));
     try {
-      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      const saved = JSON.parse(GM_getValue(STORE_KEY, 'null'));
       if (saved) return { ...base, ...saved, settings: { ...base.settings, ...saved.settings } };
     } catch (e) {
       // Speicher kaputt oder blockiert → Standardwerte
@@ -125,7 +127,7 @@
 
   function save() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(data));
+      GM_setValue(STORE_KEY, JSON.stringify(data));
     } catch (e) {
       // Speicher voll oder blockiert – Overlay funktioniert trotzdem weiter
     }
@@ -324,52 +326,57 @@
     .log-row { display: flex; justify-content: space-between; gap: 8px; }
   `;
 
-  const TEMPLATE = `
-    <div class="panel">
-      <div class="head"><strong>FC Snipe Helper</strong><button class="icon" data-act="toggle" title="Ein-/Ausklappen">–</button></div>
-      <div class="body">
-        <div class="status" id="status"></div>
-        <div class="msg" id="msg"></div>
-        <div id="targets"></div>
-        <details id="add-box">
-          <summary>Spieler hinzufügen</summary>
-          <form id="add-form">
-            <label>Name<input name="player" required placeholder="z. B. Mbappé"></label>
-            <div class="row">
-              <label>Verkaufspreis<input name="sell" inputmode="numeric" placeholder="z. B. 25000"></label>
-              <label>Wunschgewinn<input name="profit" inputmode="numeric" placeholder="z. B. 1000"></label>
-            </div>
-            <div class="row">
-              <label>Max. Kaufpreis<input name="maxBuy" inputmode="numeric" placeholder="automatisch"></label>
-              <label>Anzahl<input name="wanted" type="number" min="1" value="1"></label>
-            </div>
-            <button type="submit" class="primary">Hinzufügen</button>
-          </form>
-        </details>
-        <details>
-          <summary>Einstellungen</summary>
-          <div class="settings">
-            <label class="radio"><input type="radio" name="bumpMode" value="empty"> Min. Sofortkauf erhöhen, wenn nichts gefunden</label>
-            <label class="radio"><input type="radio" name="bumpMode" value="always"> nach jeder Suche erhöhen</label>
-            <label>Erhöhungen, bevor er wieder bei leer anfängt<input name="cycleSteps" type="number" min="1" max="50"></label>
-            <button data-act="diagnose">Diagnose</button>
-            <pre id="diag"></pre>
-          </div>
-        </details>
-        <details>
-          <summary>Verlauf</summary>
-          <div id="log"></div>
-        </details>
-      </div>
-    </div>
-  `;
+  // Kleiner DOM-Baukasten statt innerHTML: Seiten mit Trusted Types lassen
+  // innerHTML-Zuweisungen mit einem Fehler abbrechen.
+  function h(tag, attrs, ...children) {
+    const el = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs || {})) {
+      if (value === false || value == null) continue;
+      el.setAttribute(key, value === true ? '' : String(value));
+    }
+    for (const child of children.flat(Infinity)) {
+      if (child === false || child == null) continue;
+      el.append(child instanceof Node ? child : String(child));
+    }
+    return el;
+  }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  function buildPanel() {
+    const field = (label, attrs) => h('label', null, label, h('input', attrs));
+    return h('div', { class: 'panel' },
+      h('div', { class: 'head' },
+        h('strong', null, 'FC Snipe Helper'),
+        h('button', { class: 'icon', 'data-act': 'toggle', title: 'Ein-/Ausklappen' }, '–')),
+      h('div', { class: 'body' },
+        h('div', { class: 'status', id: 'status' }),
+        h('div', { class: 'msg', id: 'msg' }),
+        h('div', { id: 'targets' }),
+        h('details', null,
+          h('summary', null, 'Spieler hinzufügen'),
+          h('form', { id: 'add-form' },
+            field('Name', { name: 'player', required: true, placeholder: 'z. B. Mbappé' }),
+            h('div', { class: 'row' },
+              field('Verkaufspreis', { name: 'sell', inputmode: 'numeric', placeholder: 'z. B. 25000' }),
+              field('Wunschgewinn', { name: 'profit', inputmode: 'numeric', placeholder: 'z. B. 1000' })),
+            h('div', { class: 'row' },
+              field('Max. Kaufpreis', { name: 'maxBuy', inputmode: 'numeric', placeholder: 'automatisch' }),
+              field('Anzahl', { name: 'wanted', type: 'number', min: 1, value: 1 })),
+            h('button', { type: 'submit', class: 'primary' }, 'Hinzufügen'))),
+        h('details', null,
+          h('summary', null, 'Einstellungen'),
+          h('div', { class: 'settings' },
+            h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'bumpMode', value: 'empty' }), 'Min. Sofortkauf erhöhen, wenn nichts gefunden'),
+            h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'bumpMode', value: 'always' }), 'nach jeder Suche erhöhen'),
+            field('Erhöhungen, bevor er wieder bei leer anfängt', { name: 'cycleSteps', type: 'number', min: 1, max: 50 }),
+            h('button', { 'data-act': 'diagnose' }, 'Diagnose'),
+            h('pre', { id: 'diag' }))),
+        h('details', null,
+          h('summary', null, 'Verlauf'),
+          h('div', { id: 'log' }))));
   }
 
   function signed(n) {
-    return `<span class="${n >= 0 ? 'pos' : 'neg'}">${n >= 0 ? '+' : ''}${fmt(n)}</span>`;
+    return h('span', { class: n >= 0 ? 'pos' : 'neg' }, `${n >= 0 ? '+' : ''}${fmt(n)}`);
   }
 
   function notify(text) {
@@ -382,63 +389,61 @@
     const t = activeTarget();
     const now = Date.now();
     const lastHour = session.searchTimes.filter((x) => now - x < 3600000).length;
-    const lines = [
-      t ? `Aktiv: <strong>${escapeHtml(t.name)}</strong> · max. ${fmt(t.maxBuy)}` : '<span class="muted">Kein Spieler aktiv – bei einem Spieler auf „Filter“ klicken.</span>',
-      `<span class="muted">Mindestpreis-Zyklus ${data.bumps}/${data.settings.cycleSteps} · Suchen (60 Min): ${lastHour} · davon leer: ${session.emptyCount}</span>`,
-    ];
-    if (session.cheapest) {
-      lines.push(`Günstigster Treffer: ${fmt(session.cheapest)}${t && t.sellPrice ? ` (${signed(profitOf(session.cheapest, t.sellPrice))})` : ''}`);
-    }
-    el.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+    el.replaceChildren(
+      t
+        ? h('div', null, 'Aktiv: ', h('strong', null, t.name), ` · max. ${fmt(t.maxBuy)}`)
+        : h('div', { class: 'muted' }, 'Kein Spieler aktiv – bei einem Spieler auf „Filter“ klicken.'),
+      h('div', { class: 'muted' }, `Mindestpreis-Zyklus ${data.bumps}/${data.settings.cycleSteps} · Suchen (60 Min): ${lastHour} · davon leer: ${session.emptyCount}`),
+      session.cheapest
+        ? h('div', null, `Günstigster Treffer: ${fmt(session.cheapest)}`, t && t.sellPrice ? [' (', signed(profitOf(session.cheapest, t.sellPrice)), ')'] : null)
+        : ''
+    );
   }
 
   function renderTargets() {
     const el = root.getElementById('targets');
     if (!data.targets.length) {
-      el.innerHTML = '<div class="muted">Noch keine Spieler – unten unter „Spieler hinzufügen“ anlegen.</div>';
+      el.replaceChildren(h('div', { class: 'muted' }, 'Noch keine Spieler – unten unter „Spieler hinzufügen“ anlegen.'));
       return;
     }
-    el.innerHTML = data.targets
-      .map((t) => {
-        const done = t.bought >= t.wanted;
+    el.replaceChildren(
+      ...data.targets.map((t) => {
         const meta = [`max. ${fmt(t.maxBuy)}`];
-        if (t.sellPrice) meta.push(`VK ${fmt(t.sellPrice)}`, `${signed(profitOf(t.maxBuy, t.sellPrice))}/Stk`);
-        return `
-          <div class="target${t.id === data.activeId ? ' active' : ''}${done ? ' done' : ''}">
-            <div><div class="t-name">${escapeHtml(t.name)}</div><div class="muted">${meta.join(' · ')}</div></div>
-            <div class="t-count">${t.bought}/${t.wanted}</div>
-            <div class="t-actions">
-              <button class="primary" data-act="use" data-id="${t.id}">Filter</button>
-              <button data-act="buy" data-id="${t.id}">+1 Kauf</button>
-              <button data-act="sell" data-id="${t.id}">Verkauft</button>
-              <button class="icon" data-act="remove" data-id="${t.id}" title="Entfernen">✕</button>
-            </div>
-          </div>`;
+        if (t.sellPrice) meta.push(` · VK ${fmt(t.sellPrice)} · `, signed(profitOf(t.maxBuy, t.sellPrice)), '/Stk');
+        const cls = ['target', t.id === data.activeId && 'active', t.bought >= t.wanted && 'done'].filter(Boolean).join(' ');
+        const btn = (act, label, extra) => h('button', { 'data-act': act, 'data-id': t.id, ...extra }, label);
+        return h('div', { class: cls },
+          h('div', null, h('div', { class: 't-name' }, t.name), h('div', { class: 'muted' }, meta)),
+          h('div', { class: 't-count' }, `${t.bought}/${t.wanted}`),
+          h('div', { class: 't-actions' },
+            btn('use', 'Filter', { class: 'primary' }),
+            btn('buy', '+1 Kauf'),
+            btn('sell', 'Verkauft'),
+            btn('remove', '✕', { class: 'icon', title: 'Entfernen' })));
       })
-      .join('');
+    );
   }
 
   function renderLog() {
     const el = root.getElementById('log');
     const spent = data.log.filter((e) => e.type === 'buy').reduce((s, e) => s + e.price, 0);
     const income = data.log.filter((e) => e.type === 'sell').reduce((s, e) => s + afterTax(e.price), 0);
+    const row = (left, right) => h('div', { class: 'log-row' }, left, right);
     const rows = data.log
       .slice(-30)
       .reverse()
       .map((e) => {
         const time = new Date(e.t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        const label = e.type === 'buy' ? 'Kauf' : 'Verkauf';
-        return `<div class="log-row"><span>${time} · ${label} · ${escapeHtml(e.name)}</span><span>${fmt(e.price)}</span></div>`;
-      })
-      .join('');
-    el.innerHTML = `
-      <div class="log">
-        <div class="log-row"><span>Ausgegeben</span><span>${fmt(spent)}</span></div>
-        <div class="log-row"><span>Einnahmen (nach Steuer)</span><span>${fmt(income)}</span></div>
-        <div class="log-row"><strong>Bilanz</strong>${signed(income - spent)}</div>
-        ${rows || '<div class="muted">Noch keine Einträge.</div>'}
-        ${rows ? '<div><button data-act="clear-log">Verlauf löschen</button></div>' : ''}
-      </div>`;
+        return row(h('span', null, `${time} · ${e.type === 'buy' ? 'Kauf' : 'Verkauf'} · ${e.name}`), h('span', null, fmt(e.price)));
+      });
+    el.replaceChildren(
+      h('div', { class: 'log' },
+        row(h('span', null, 'Ausgegeben'), h('span', null, fmt(spent))),
+        row(h('span', null, 'Einnahmen (nach Steuer)'), h('span', null, fmt(income))),
+        row(h('strong', null, 'Bilanz'), signed(income - spent)),
+        rows.length ? rows : h('div', { class: 'muted' }, 'Noch keine Einträge.'),
+        rows.length ? h('div', null, h('button', { 'data-act': 'clear-log' }, 'Verlauf löschen')) : null)
+    );
   }
 
   function render() {
@@ -512,23 +517,27 @@
   }
 
   function updateMaxBuyPlaceholder(form) {
-    const sell = parseCoins(form.sell.value);
-    const auto = sell ? maxBuyFor(sell, parseCoins(form.profit.value)) : 0;
-    form.maxBuy.placeholder = auto ? `automatisch: ${fmt(auto)}` : 'automatisch';
+    const f = form.elements;
+    const sell = parseCoins(f.namedItem('sell').value);
+    const auto = sell ? maxBuyFor(sell, parseCoins(f.namedItem('profit').value)) : 0;
+    f.namedItem('maxBuy').placeholder = auto ? `automatisch: ${fmt(auto)}` : 'automatisch';
   }
 
   function onAdd(e) {
     e.preventDefault();
     const form = e.target;
-    const sellPrice = parseCoins(form.sell.value);
-    const maxBuy = floorToValid(parseCoins(form.maxBuy.value)) || (sellPrice ? maxBuyFor(sellPrice, parseCoins(form.profit.value)) : 0);
+    const f = form.elements;
+    const sellPrice = parseCoins(f.namedItem('sell').value);
+    const maxBuy =
+      floorToValid(parseCoins(f.namedItem('maxBuy').value)) ||
+      (sellPrice ? maxBuyFor(sellPrice, parseCoins(f.namedItem('profit').value)) : 0);
     if (!maxBuy) return notify('Gib einen Max. Kaufpreis oder einen Verkaufspreis an (mind. 200).');
     data.targets.push({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      name: form.player.value.trim(),
+      name: f.namedItem('player').value.trim(),
       maxBuy,
       sellPrice,
-      wanted: Math.max(1, parseInt(form.wanted.value, 10) || 1),
+      wanted: Math.max(1, parseInt(f.namedItem('wanted').value, 10) || 1),
       bought: 0,
     });
     form.reset();
@@ -575,10 +584,10 @@
   function mountPanel() {
     host = document.createElement('div');
     host.id = 'fc-snipe-helper';
-    host.style.cssText = 'position:fixed;top:72px;right:12px;z-index:2147483000;';
+    host.style.cssText = 'position:fixed;top:72px;right:12px;z-index:2147483647;';
     root = host.attachShadow({ mode: 'open' });
-    root.innerHTML = TEMPLATE;
     applyStyles(root);
+    root.append(buildPanel());
     root.querySelector(`input[name="bumpMode"][value="${data.settings.bumpMode}"]`).checked = true;
     root.querySelector('input[name="cycleSteps"]').value = data.settings.cycleSteps;
     root.addEventListener('click', onPanelClick);
@@ -591,15 +600,50 @@
     render();
   }
 
+  // Ohne Konsole sichtbar machen, warum das Overlay fehlt.
+  function showError(err) {
+    console.error('[FC Snipe Helper] Start fehlgeschlagen:', err);
+    const box = document.createElement('div');
+    box.textContent = `FC Snipe Helper – Fehler beim Start: ${(err && err.message) || err}`;
+    box.style.cssText =
+      'position:fixed;top:12px;right:12px;z-index:2147483647;max-width:380px;padding:10px 12px;border-radius:8px;' +
+      'background:#c53030;color:#fff;font:13px/1.4 system-ui,sans-serif;';
+    (document.body || document.documentElement).appendChild(box);
+  }
+
+  let startError = null;
+
+  // Tampermonkey-Menü: Overlay zurückholen und Status anzeigen
+  function registerMenu() {
+    if (typeof GM_registerMenuCommand !== 'function') return;
+    GM_registerMenuCommand('Overlay anzeigen / Status', () => {
+      if (startError) return window.alert(`FC Snipe Helper – Fehler beim Start:\n${startError.stack || startError}`);
+      data.collapsed = false;
+      save();
+      attachHost();
+      render();
+      const r = host.getBoundingClientRect();
+      window.alert(
+        'FC Snipe Helper läuft.\n' +
+          `Overlay im Dokument: ${host.isConnected ? 'ja' : 'nein'}\n` +
+          `Position: ${Math.round(r.left)}, ${Math.round(r.top)} · Größe: ${Math.round(r.width)}×${Math.round(r.height)}\n` +
+          `Fenster: ${window.innerWidth}×${window.innerHeight}\n` +
+          `Adresse: ${location.href}`
+      );
+    });
+  }
+
   function init() {
     console.info('[FC Snipe Helper] geladen auf', location.href);
+    registerMenu();
     try {
       data = load();
       mountPanel();
       watchWebApp();
       scan();
     } catch (e) {
-      console.error('[FC Snipe Helper] Start fehlgeschlagen:', e);
+      startError = e;
+      showError(e);
     }
   }
 

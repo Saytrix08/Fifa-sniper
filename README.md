@@ -21,7 +21,9 @@ Overlay (Tampermonkey-Userscript) für die EA FC Web App, das dir beim **manuell
 ### Overlay erscheint nicht?
 
 - **Tampermonkey-Symbol** in der Browserleiste: Auf der Web App sollte eine rote **1** daran stehen und „FC Snipe Helper“ beim Anklicken aktiviert sein. Steht keine Zahl dran, startet Tampermonkey das Script nicht. Dann den Schalter aus Schritt 3 prüfen.
-- **Konsole** (F12 → Reiter „Console“): Dort sollte `[FC Snipe Helper] geladen auf …` stehen. Steht dort `Start fehlgeschlagen`, die rote Fehlermeldung darunter kopieren.
+- **Tampermonkey-Menü:** Auf das Tampermonkey-Symbol klicken → unter „FC Snipe Helper“ auf **„Overlay anzeigen / Status“**. Es öffnet sich ein Fenster, das sagt, ob das Script läuft, wo das Overlay liegt oder welcher Fehler beim Start kam.
+- **Rote Box oben rechts:** Wenn der Start fehlschlägt, zeigt das Script die Fehlermeldung direkt auf der Seite an.
+- **Konsole** (F12 → Reiter „Console“): Dort sollte `[FC Snipe Helper] geladen auf …` stehen.
 
 ## Ablauf
 
